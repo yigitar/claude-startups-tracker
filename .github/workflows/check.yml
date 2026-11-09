@@ -14,48 +14,56 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          CHANGED=false
-          DETAILS=""
+          python3 -c "
+          import urllib.request, json, sys, ssl
 
-          check_page() {
-            local url="$1"
-            local name="$2"
-            local body
-            body=$(curl -sL -A "Mozilla/5.0" -m 30 "$url")
-            local final_url
-            final_url=$(curl -sL -o /dev/null -w '%{url_effective}' -A "Mozilla/5.0" -m 30 "$url")
+          URLS = [
+              ('Platform Basvuru', 'https://platform.claude.com/offers/startups-application'),
+              ('Startups Program', 'https://claude.com/programs/startups'),
+              ('VC Partner', 'https://claude.com/contact-sales/vc-partner'),
+              ('YC Credit', 'https://claude.com/contact-sales/yc-credit'),
+              ('Anthropic Startups', 'https://www.anthropic.com/startups'),
+          ]
 
-            if echo "$body" | grep -qi "apply now\\|start.application\\|application.form\\|submit.your.application"; then
-              CHANGED=true
-              DETAILS="${DETAILS}\\n\u2705 ${name}: BASVURU ACIK OLABILIR! (${final_url})"
-            elif echo "$body" | grep -qi "cohort is now full\\|not accepting"; then
-              DETAILS="${DETAILS}\\n\u274c ${name}: Kapali (${final_url})"
-            else
-              CHANGED=true
-              DETAILS="${DETAILS}\\n\u26a0\ufe0f ${name}: Bilinmeyen icerik! (${final_url})"
-            fi
-          }
+          CLOSED = ['cohort is now full', 'not accepting']
+          OPEN = ['apply now', 'start application', 'application form', 'submit your application']
+          BOT = '$TELEGRAM_BOT_TOKEN'
+          CHAT = '$TELEGRAM_CHAT_ID'
 
-          check_page "https://platform.claude.com/offers/startups-application" "Platform Basvuru"
-          check_page "https://claude.com/programs/startups" "Startups Program"
-          check_page "https://claude.com/contact-sales/vc-partner" "VC Partner"
-          check_page "https://claude.com/contact-sales/yc-credit" "YC Credit"
-          check_page "https://www.anthropic.com/startups" "Anthropic Startups"
+          ctx = ssl.create_default_context()
+          changed = False
+          details = []
 
-          LINKS="Basvuru linkleri:"
-          LINKS="${LINKS}\\n1. https://platform.claude.com/offers/startups-application"
-          LINKS="${LINKS}\\n2. https://claude.com/programs/startups"
-          LINKS="${LINKS}\\n3. https://claude.com/contact-sales/vc-partner"
-          LINKS="${LINKS}\\n4. https://claude.com/contact-sales/yc-credit"
-          LINKS="${LINKS}\\n5. https://www.anthropic.com/startups"
+          for name, url in URLS:
+              try:
+                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                  with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
+                      body = r.read().decode('utf-8', 'replace').lower()
+                      final = r.url
+                  if any(m in body for m in OPEN):
+                      changed = True
+                      details.append(f'✅ {name}: BASVURU ACIK OLABILIR! ({final})')
+                  elif any(m in body for m in CLOSED):
+                      details.append(f'❌ {name}: Kapali ({final})')
+                  else:
+                      changed = True
+                      details.append(f'⚠️ {name}: Bilinmeyen icerik! ({final})')
+              except Exception as e:
+                  changed = True
+                  details.append(f'⚠️ {name}: Hata: {str(e)[:80]}')
 
-          if [ "$CHANGED" = true ]; then
-            MSG="\ud83d\udea8 CLAUDE STARTUPS DEGISIKLIK!\\n\\n$(echo -e "$DETAILS")\\n\\n$(echo -e "$LINKS")"
-            curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \\
-              -d chat_id="${TELEGRAM_CHAT_ID}" \\
-              -d text="$(echo -e "$MSG")" \\
-              -d parse_mode=""
-          fi
+          report = chr(10).join(details)
+          print(report)
 
-          echo -e "$DETAILS"
-          echo "changed=$CHANGED"
+          if changed:
+              links = chr(10).join([f'{i+1}. {u[1]}' for i, u in enumerate(URLS)])
+              msg = f'🚨 CLAUDE STARTUPS DEGISIKLIK!{chr(10)}{chr(10)}{report}{chr(10)}{chr(10)}Basvuru linkleri:{chr(10)}{links}'
+              data = urllib.parse.urlencode({'chat_id': CHAT, 'text': msg}).encode()
+              import urllib.parse
+              data = urllib.parse.urlencode({'chat_id': CHAT, 'text': msg}).encode()
+              req2 = urllib.request.Request(f'https://api.telegram.org/bot{BOT}/sendMessage', data=data)
+              urllib.request.urlopen(req2, timeout=10, context=ctx)
+              print('Telegram bildirim gonderildi')
+          else:
+              print('Degisiklik yok')
+          "
