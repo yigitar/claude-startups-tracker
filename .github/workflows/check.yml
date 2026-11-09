@@ -15,18 +15,19 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 -c "
-          import urllib.request, json, sys, ssl
+          import urllib.request, urllib.parse, json, sys, ssl
 
           URLS = [
               ('Platform Basvuru', 'https://platform.claude.com/offers/startups-application'),
               ('Startups Program', 'https://claude.com/programs/startups'),
-              ('VC Partner', 'https://claude.com/contact-sales/vc-partner'),
               ('YC Credit', 'https://claude.com/contact-sales/yc-credit'),
               ('Anthropic Startups', 'https://www.anthropic.com/startups'),
           ]
 
           CLOSED = ['cohort is now full', 'not accepting']
-          OPEN = ['apply now', 'start application', 'application form', 'submit your application']
+          OPEN = ['apply now', 'start application', 'submit your application']
+          # SPA pages return a Next.js shell — no rendered text. These markers mean page is unchanged SPA shell.
+          SPA_SHELL = ['__next_data__', '__next', 'next/static', '_buildmanifest']
           BOT = '$TELEGRAM_BOT_TOKEN'
           CHAT = '$TELEGRAM_CHAT_ID'
 
@@ -36,34 +37,37 @@ jobs:
 
           for name, url in URLS:
               try:
-                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                  req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
                   with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
-                      body = r.read().decode('utf-8', 'replace').lower()
+                      body = r.read().decode('utf-8', 'replace')
+                      low = body.lower()
                       final = r.url
-                  if any(m in body for m in OPEN):
+
+                  if any(m in low for m in OPEN):
                       changed = True
-                      details.append(f'✅ {name}: BASVURU ACIK OLABILIR! ({final})')
-                  elif any(m in body for m in CLOSED):
-                      details.append(f'❌ {name}: Kapali ({final})')
+                      details.append(f'\u2705 {name}: BASVURU ACIK OLABILIR! ({final})')
+                  elif any(m in low for m in CLOSED):
+                      details.append(f'\u274c {name}: Kapali ({final})')
+                  elif any(m in low for m in SPA_SHELL):
+                      # SPA shell — JS ile render ediliyor, curl ile icerik okunamaz, normal durum
+                      details.append(f'\u23f8 {name}: SPA shell (normal) ({final})')
                   else:
                       changed = True
-                      details.append(f'⚠️ {name}: Bilinmeyen icerik! ({final})')
+                      details.append(f'\u26a0\ufe0f {name}: Bilinmeyen icerik! ({final})')
               except Exception as e:
                   changed = True
-                  details.append(f'⚠️ {name}: Hata: {str(e)[:80]}')
+                  details.append(f'\u26a0\ufe0f {name}: Hata: {str(e)[:80]}')
 
           report = chr(10).join(details)
           print(report)
 
           if changed:
               links = chr(10).join([f'{i+1}. {u[1]}' for i, u in enumerate(URLS)])
-              msg = f'🚨 CLAUDE STARTUPS DEGISIKLIK!{chr(10)}{chr(10)}{report}{chr(10)}{chr(10)}Basvuru linkleri:{chr(10)}{links}'
-              data = urllib.parse.urlencode({'chat_id': CHAT, 'text': msg}).encode()
-              import urllib.parse
+              msg = f'\ud83d\udea8 CLAUDE STARTUPS DEGISIKLIK!{chr(10)}{chr(10)}{report}{chr(10)}{chr(10)}Basvuru linkleri:{chr(10)}{links}'
               data = urllib.parse.urlencode({'chat_id': CHAT, 'text': msg}).encode()
               req2 = urllib.request.Request(f'https://api.telegram.org/bot{BOT}/sendMessage', data=data)
               urllib.request.urlopen(req2, timeout=10, context=ctx)
               print('Telegram bildirim gonderildi')
           else:
-              print('Degisiklik yok')
+              print('Degisiklik yok, bildirim gonderilmedi')
           "
